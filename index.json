@@ -1,0 +1,19 @@
+{
+  "name": "Toonily",
+  "sources": [
+    {
+      "id": "en.toonily",
+      "name": "Toonily",
+      "version": 3,
+      "language": "en",
+      "nsfw": true,
+      "file": "toonily.js",
+      "sha256": "9f750055965995c3849dde48296a8bfd8292d4db06d4b4fe5fc477c2a597084b",
+      "domains": [
+        "toonily.com",
+        "wp.com",
+        "googleusercontent.com"
+      ]
+    }
+  ]
+}
