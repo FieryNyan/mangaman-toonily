@@ -4,11 +4,11 @@
     {
       "id": "en.toonily",
       "name": "Toonily",
-      "version": 3,
+      "version": 4,
       "language": "en",
       "nsfw": true,
       "file": "toonily.js",
-      "sha256": "9f750055965995c3849dde48296a8bfd8292d4db06d4b4fe5fc477c2a597084b",
+      "sha256": "c23e0c9ffc48490e17e96046127ed3ab5aa6263b7287a800909a5de9dd172c5b",
       "domains": [
         "toonily.com",
         "wp.com",

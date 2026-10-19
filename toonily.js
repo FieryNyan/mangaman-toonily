@@ -67,11 +67,22 @@ function cleanCover(url) {
   return abs(url).replace(/-\d+x\d+(\.\w+)($|\?)/, "$1$2");
 }
 
-function mangaIdFromPath(path) {
-  return String(path || "")
+function pathOnly(url) {
+  return String(url || "")
     .replace(/^https?:\/\/[^/]+/i, "")
     .replace(/\/+$/, "")
-    .replace(/^\/?(webtoon|serie)\//, "")
+    .split("?")[0]
+    .split("#")[0];
+}
+
+function isMangaUrl(url) {
+  // Manga pages are /serie/slug — not /serie/slug/chapter-1
+  return /^\/?(serie|webtoon|manga)\/[^/]+$/i.test(pathOnly(url));
+}
+
+function mangaIdFromPath(path) {
+  return pathOnly(path)
+    .replace(/^\/?(webtoon|serie|manga)\//i, "")
     .split("/")[0];
 }
 
@@ -79,30 +90,58 @@ function mangaPath(id) {
   return "/" + MANGA_PATH + "/" + id + "/";
 }
 
+function cleanTitle(text) {
+  return String(text || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\s*(HOT|NEW|TRENDING|COMPLETED|ONGOING)\s*$/i, "")
+    .trim();
+}
+
 function parseArchive(html) {
+  if (/just a moment|cf-browser-verification|challenge-platform/i.test(html || "")) {
+    mm.errors.fail("Cloudflare challenge. Open Toonily once from the challenge sheet, then retry.");
+  }
   const items = [];
   const seen = {};
-  const cards = mm.html.select(html, "div.page-item-detail");
-  const list = cards.length ? cards : mm.html.select(html, "div.c-tabs-item__content");
+  // Prefer manga cards; plain page-item-detail also catches non-title widgets.
+  let list = mm.html.select(html, "div.page-item-detail.manga");
+  if (!list.length) list = mm.html.select(html, "div.page-item-detail");
+  if (!list.length) list = mm.html.select(html, "div.c-tabs-item__content");
   for (let i = 0; i < list.length; i++) {
-    const link = mm.html.select(list[i].html, "a");
-    let href = "";
-    let title = "";
-    for (let j = 0; j < link.length; j++) {
-      const candidate = link[j].attrs.href || "";
-      if (/\/(serie|webtoon|manga)\//i.test(candidate)) {
-        href = candidate;
-        title = link[j].text.replace(/\s+/g, " ").trim();
-        if (title) break;
+    const card = list[i].html;
+    // Madara puts the real series title on .post-title a — not chapter rows.
+    let link =
+      mm.html.select(card, ".post-title a")[0] ||
+      mm.html.select(card, "div.post-title a")[0] ||
+      mm.html.select(card, "h3 a")[0] ||
+      mm.html.select(card, "h5 a")[0];
+    if (!link || !isMangaUrl(link.attrs.href || "")) {
+      const anchors = mm.html.select(card, "a");
+      link = null;
+      for (let j = 0; j < anchors.length; j++) {
+        if (isMangaUrl(anchors[j].attrs.href || "")) {
+          const text = cleanTitle(anchors[j].text);
+          // Skip empty cover wrappers; keep the titled series link.
+          if (!text) {
+            if (!link) link = anchors[j];
+            continue;
+          }
+          link = anchors[j];
+          break;
+        }
       }
     }
-    if (!href) continue;
+    if (!link) continue;
+    const href = link.attrs.href || "";
+    if (!isMangaUrl(href)) continue;
     const id = mangaIdFromPath(href);
     if (!id || seen[id]) continue;
     seen[id] = true;
-    const img = mm.html.select(list[i].html, "img")[0];
+    const title = cleanTitle(link.text) || id;
+    const img = mm.html.select(card, "img")[0];
     const cover = img ? cleanCover(imageFromAttrs(img.attrs)) : "";
-    items.push({ id: id, title: title || id, cover: cover || undefined });
+    items.push({ id: id, title: title, cover: cover || undefined });
   }
   return items;
 }
@@ -152,7 +191,13 @@ function loadMore(page, mode, query, filters) {
     }
   }
   const res = post(BASE + "/wp-admin/admin-ajax.php", formBody(fields));
-  const items = parseArchive(res.body);
+  let items = parseArchive(res.body);
+  // First-page HTML fallback when ajax is challenged or returns junk widgets.
+  if (!items.length && page === 1 && mode !== "search") {
+    const order = mode === "latest" ? "latest" : "views";
+    const pageRes = get(BASE + "/" + MANGA_PATH + "/?m_orderby=" + order);
+    items = parseArchive(pageRes.body);
+  }
   return { items: items, hasNext: items.length >= PAGE_SIZE };
 }
 
@@ -188,7 +233,7 @@ globalThis.source = {
   manifest: {
     id: "en.toonily",
     name: "Toonily",
-    version: 3,
+    version: 4,
     language: "en",
     nsfw: true,
     baseURL: BASE,
@@ -244,11 +289,22 @@ globalThis.source = {
   getManga(id) {
     const res = get(BASE + mangaPath(id));
     const html = res.body;
+    if (/just a moment|cf-browser-verification|challenge-platform/i.test(html || "")) {
+      mm.errors.fail("Cloudflare challenge. Open Toonily once from the challenge sheet, then retry.");
+    }
     const titleNode =
       mm.html.select(html, "div.post-title h1")[0] ||
       mm.html.select(html, "div.post-title h3")[0] ||
+      mm.html.select(html, "#manga-title h1")[0] ||
       mm.html.select(html, "h1")[0];
-    const title = titleNode ? titleNode.text.replace(/\s+/g, " ").trim() : id;
+    // Strip Madara badge spans so titles are not "SeriesHOT".
+    let title = id;
+    if (titleNode) {
+      const bare = String(titleNode.html || "")
+        .replace(/<span[^>]*manga-title-badges[^>]*>[\s\S]*?<\/span>/gi, "")
+        .replace(/<[^>]+>/g, " ");
+      title = cleanTitle(bare) || cleanTitle(titleNode.text) || id;
+    }
     const img =
       mm.html.select(html, "div.summary_image img")[0] ||
       mm.html.select(html, "div.summary_image")[0];
